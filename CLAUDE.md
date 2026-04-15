@@ -25,9 +25,14 @@ OpenCLI 是一个将网站、浏览器会话统一转化为 CLI 接口的工具�
 
 ### topics 命令分页
 
-`topics` 支持 `offset` 参数用于翻页：
+ZSXQ API 使用 `end_time` cursor 分页，不是数字 offset。
+
 ```bash
-opencli zsxq topics --limit 30 --offset 60 --group_id <id> --resolve_files false
+# 获取最新 30 条
+opencli zsxq topics --limit 30 --group_id <id> --resolve_files false
+
+# 翻页：传入上一页最后一条的 create_time
+opencli zsxq topics --limit 30 --end_time "2026-04-15T09:39:51.023+0800" --group_id <id> --resolve_files false
 ```
 
 ### topic 命令新增 images/files
