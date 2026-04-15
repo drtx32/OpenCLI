@@ -71,14 +71,16 @@ cli({
     browser: true,
     args: [
         { name: 'limit', type: 'int', default: 30, help: '数量（分页自动累加）' },
+        { name: 'offset', type: 'int', default: 0, help: '起始偏移量（跳过前 N 条，用于翻页填充历史内容）' },
         { name: 'group_id', help: '星球 ID（留空则自动获取当前星球）' },
         { name: 'resolve_files', default: true, help: '是否解析文件下载链接（设为 false 可大幅提升大批量拉取速度）' },
     ],
-    columns: ['topic_id', 'type', 'author', 'title', 'content', 'comments', 'likes', 'time'],
+    columns: ['topic_id', 'type', 'author', 'title', 'content', 'comments', 'likes', 'time', 'images', 'files'],
     func: async (page, kwargs) => {
         await ensureZsxqPage(page);
         await ensureZsxqAuth(page);
         const limit = Math.max(1, Number(kwargs.limit) || 30);
+        const offset = Math.max(0, Number(kwargs.offset) || 0);
         const groupId = String(kwargs.group_id || await getActiveGroupId(page));
 
         // Fetch pages sequentially with retry + stagger to handle rate limiting (1059)
@@ -89,7 +91,7 @@ cli({
             let topics = [];
             for (let attempt = 0; attempt < 3; attempt++) {
                 try {
-                    const { data } = await fetchFirstJson(page, [`${API_BASE}/v2/groups/${groupId}/topics?scope=all&count=${PAGE_SIZE}&start=${p * PAGE_SIZE}`]);
+                    const { data } = await fetchFirstJson(page, [`${API_BASE}/v2/groups/${groupId}/topics?scope=all&count=${PAGE_SIZE}&start=${offset + p * PAGE_SIZE}`]);
                     topics = Array.isArray(data) ? data : (unwrapRespData(data)?.topics ?? []);
                     break;
                 } catch (err) {
