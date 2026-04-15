@@ -71,7 +71,7 @@ cli({
     browser: true,
     args: [
         { name: 'limit', type: 'int', default: 30, help: '数量（分页自动累加）' },
-        { name: 'offset', type: 'int', default: 0, help: '起始偏移量（跳过前 N 条，用于翻页填充历史内容）' },
+        { name: 'end_time', help: '起始时间戳（ISO 格式或时间戳，传入后可获取更早的内容，配合 limit 翻页）' },
         { name: 'group_id', help: '星球 ID（留空则自动获取当前星球）' },
         { name: 'resolve_files', default: true, help: '是否解析文件下载链接（设为 false 可大幅提升大批量拉取速度）' },
     ],
@@ -80,18 +80,22 @@ cli({
         await ensureZsxqPage(page);
         await ensureZsxqAuth(page);
         const limit = Math.max(1, Number(kwargs.limit) || 30);
-        const offset = Math.max(0, Number(kwargs.offset) || 0);
         const groupId = String(kwargs.group_id || await getActiveGroupId(page));
 
-        // Fetch pages sequentially with retry + stagger to handle rate limiting (1059)
+        // Fetch pages sequentially using end_time cursor pagination
         const PAGE_SIZE = 30;
-        const numPages = Math.ceil(limit / PAGE_SIZE);
         const pageResults = [];
-        for (let p = 0; p < numPages; p++) {
+        let lastTopicTime = kwargs.end_time ? String(kwargs.end_time) : '';
+
+        while (pageResults.flat().length < limit) {
             let topics = [];
+            const url = lastTopicTime
+                ? `${API_BASE}/v2/groups/${groupId}/topics?scope=all&count=${PAGE_SIZE}&end_time=${encodeURIComponent(lastTopicTime)}`
+                : `${API_BASE}/v2/groups/${groupId}/topics?scope=all&count=${PAGE_SIZE}`;
+
             for (let attempt = 0; attempt < 3; attempt++) {
                 try {
-                    const { data } = await fetchFirstJson(page, [`${API_BASE}/v2/groups/${groupId}/topics?scope=all&count=${PAGE_SIZE}&start=${offset + p * PAGE_SIZE}`]);
+                    const { data } = await fetchFirstJson(page, [url]);
                     topics = Array.isArray(data) ? data : (unwrapRespData(data)?.topics ?? []);
                     break;
                 } catch (err) {
@@ -99,9 +103,17 @@ cli({
                     await new Promise(r => setTimeout(r, 2000 * (attempt + 1))); // backoff 2s, 4s
                 }
             }
+
+            if (!topics || topics.length === 0) break;
             pageResults.push(topics);
-            if (p < numPages - 1) await new Promise(r => setTimeout(r, 500)); // stagger between pages
+
+            // Use last topic's create_time as next cursor
+            lastTopicTime = topics[topics.length - 1].create_time || '';
+
+            if (pageResults.flat().length >= limit || topics.length < PAGE_SIZE) break;
+            if (pageResults.length > 0) await new Promise(r => setTimeout(r, 500)); // stagger between pages
         }
+
         const rawTopics = pageResults.flat().slice(0, limit);
 
         const resolveFiles = kwargs.resolve_files !== false;
