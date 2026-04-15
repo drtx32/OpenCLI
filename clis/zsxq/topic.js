@@ -1,6 +1,6 @@
 import { cli, Strategy } from '@jackwener/opencli/registry';
 import { CliError } from '@jackwener/opencli/errors';
-import { getActiveGroupId, browserJsonRequest, ensureZsxqAuth, ensureZsxqPage, fetchFirstJson, getCommentsFromResponse, getTopicFromResponse, getTopicUrl, summarizeComments, toTopicRow, } from './utils.js';
+import { getActiveGroupId, browserJsonRequest, ensureZsxqAuth, ensureZsxqPage, fetchFirstJson, getCommentsFromResponse, getTopicFromResponse, getTopicUrl, summarizeComments, toTopicRow, unwrapRespData } from './utils.js';
 cli({
     site: 'zsxq',
     name: 'topic',
@@ -12,8 +12,9 @@ cli({
         { name: 'id', required: true, positional: true, help: 'Topic ID' },
         { name: 'group_id', help: 'Group ID (optional; defaults to active group in Chrome)' },
         { name: 'comment_limit', type: 'int', default: 20, help: 'Number of comments to fetch' },
+        { name: 'resolve_files', default: true, help: '是否解析文件下载链接（设为 false 可提升速度）' },
     ],
-    columns: ['topic_id', 'type', 'author', 'title', 'comments', 'likes', 'comment_preview', 'url'],
+    columns: ['topic_id', 'type', 'author', 'title', 'comments', 'likes', 'images', 'files', 'comment_preview', 'url'],
     func: async (page, kwargs) => {
         await ensureZsxqPage(page);
         await ensureZsxqAuth(page);
@@ -40,8 +41,35 @@ cli({
             comments,
             comments_count: topic.comments_count ?? comments.length,
         });
+
+        // Extract images
+        const images = [];
+        for (const img of topic.talk?.images ?? []) {
+            if (img.large?.url) images.push(img.large.url);
+        }
+
+        // Resolve file download URLs if requested
+        const files = [];
+        const resolveFiles = kwargs.resolve_files !== false && kwargs.resolve_files !== 'false';
+        for (const f of topic.talk?.files ?? []) {
+            const fileId = f.file_id ?? f.id ?? f.fid ?? null;
+            let fileUrl = '';
+            if (resolveFiles && fileId) {
+                try {
+                    await new Promise(r => setTimeout(r, 800)); // stagger
+                    const { data } = await fetchFirstJson(page, [`https://api.zsxq.com/v2/files/${fileId}/download_url?group_id=${groupId}`]);
+                    fileUrl = unwrapRespData(data)?.download_url ?? '';
+                } catch {
+                    // File download API may be rate-limited; leave URL empty
+                }
+            }
+            files.push({ name: f.name ?? '', url: fileUrl });
+        }
+
         return [{
                 ...row,
+                images,
+                files,
                 comment_preview: summarizeComments(comments, 5),
                 url: getTopicUrl(topic.topic_id ?? topicId),
             }];
